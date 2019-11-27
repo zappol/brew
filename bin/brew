@@ -19,6 +19,15 @@ symlink_target_directory() {
   quiet_cd "$directory" && quiet_cd "$target_dirname" && pwd -P
 }
 
+# Enable and use default Bash builtins rather than user-defined functions
+builtin enable compgen unset
+for cmd in $(builtin compgen -A builtin)
+do
+  builtin unset -f $cmd
+  builtin enable $cmd
+done
+unset cmd
+
 BREW_FILE_DIRECTORY="$(quiet_cd "${0%/*}/" && pwd -P)"
 HOMEBREW_BREW_FILE="${BREW_FILE_DIRECTORY%/}/${0##*/}"
 HOMEBREW_PREFIX="${HOMEBREW_BREW_FILE%/*/*}"
@@ -65,8 +74,9 @@ do
   export "$VAR_NEW"="${!VAR}"
 done
 
-# Set CI variable for Azure Pipelines, Jenkins.
-if [[ -n "$TF_BUILD" || -n "$JENKINS_HOME" ]]
+# Set CI variable for GitHub Actions, Azure Pipelines, Jenkins
+# (Set by default on Circle and Travis CI)
+if [[ -n "$GITHUB_ACTIONS" || -n "$TF_BUILD" || -n "$JENKINS_HOME" ]]
 then
   export CI="1"
 fi

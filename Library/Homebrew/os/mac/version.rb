@@ -6,6 +6,7 @@ module OS
   module Mac
     class Version < ::Version
       SYMBOLS = {
+        catalina:    "10.15",
         mojave:      "10.14",
         high_sierra: "10.13",
         sierra:      "10.12",
@@ -41,7 +42,7 @@ module OS
         to_sym.to_s.split("_").map(&:capitalize).join(" ")
       end
 
-      # For OS::Mac::Version compatability
+      # For OS::Mac::Version compatibility
       def requires_nehalem_cpu?
         Hardware.oldest_cpu(self) == :nehalem
       end

@@ -109,7 +109,7 @@ class DependencyCollector
   end
 
   def parse_string_spec(spec, tags)
-    if spec =~ HOMEBREW_TAP_FORMULA_REGEX
+    if spec.match?(HOMEBREW_TAP_FORMULA_REGEX)
       TapDependency.new(spec, tags)
     elsif tags.empty?
       Dependency.new(spec, tags)
@@ -125,7 +125,7 @@ class DependencyCollector
     when :java          then java_dep_if_needed(tags)
     when :linux         then LinuxRequirement.new(tags)
     when :macos         then MacOSRequirement.new(tags)
-    when :maximum_macos then MaximumMacOSRequirement.new(tags)
+    when :maximum_macos then MacOSRequirement.new(tags, comparator: "<=")
     when :osxfuse       then OsxfuseRequirement.new(tags)
     when :tuntap        then TuntapRequirement.new(tags)
     when :x11           then X11Requirement.new(tags)

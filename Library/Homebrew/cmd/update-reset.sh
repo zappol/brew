@@ -1,6 +1,8 @@
 #:  * `update-reset` [<repository>]
 #:
-#:  Fetches and resets Homebrew and all tap repositories (or any specified `repository`) using `git`(1) to their latest `origin/master`. Note this will destroy all your uncommitted or committed changes.
+#:  Fetch and reset Homebrew and all tap repositories (or any specified <repository>) using `git`(1) to their latest `origin/master`.
+#:
+#:  *Note:* this will destroy all your uncommitted or committed changes.
 
 homebrew-update-reset() {
   local DIR
@@ -34,11 +36,11 @@ homebrew-update-reset() {
   do
     [[ -d "$DIR/.git" ]] || continue
     cd "$DIR" || continue
-    echo "==> Fetching $DIR..."
+    ohai "Fetching $DIR..."
     git fetch --force --tags origin
     echo
 
-    echo "==> Resetting $DIR..."
+    ohai "Resetting $DIR..."
     git checkout --force -B master origin/master
     echo
   done

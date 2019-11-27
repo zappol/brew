@@ -19,6 +19,8 @@ def curl_args(*extra_args, show_output: false, user_agent: :default)
   # do not load .curlrc unless requested (must be the first argument)
   args << "-q" unless ENV["HOMEBREW_CURLRC"]
 
+  args << "--globoff"
+
   args << "--show-error"
 
   args << "--user-agent" << case user_agent
@@ -37,16 +39,19 @@ def curl_args(*extra_args, show_output: false, user_agent: :default)
     args << "--silent" unless $stdout.tty?
   end
 
+  args << "--retry" << ENV["HOMEBREW_CURL_RETRIES"] if ENV["HOMEBREW_CURL_RETRIES"]
+
   args + extra_args
 end
 
-def curl(*args)
+def curl(*args, secrets: [], **options)
   # SSL_CERT_FILE can be incorrectly set by users or portable-ruby and screw
   # with SSL downloads so unset it here.
   system_command! curl_executable,
-                  args:         curl_args(*args),
+                  args:         curl_args(*args, **options),
                   print_stdout: true,
-                  env:          { "SSL_CERT_FILE" => nil }
+                  env:          { "SSL_CERT_FILE" => nil },
+                  secrets:      secrets
 end
 
 def curl_download(*args, to: nil, **options)
@@ -55,7 +60,7 @@ def curl_download(*args, to: nil, **options)
 
   range_stdout = curl_output("--location", "--range", "0-1",
                              "--dump-header", "-",
-                             "--write-out", "%{http_code}",
+                             "--write-out", "%\{http_code}",
                              "--output", "/dev/null", *args, **options).stdout
   headers, _, http_status = range_stdout.partition("\r\n\r\n")
 
@@ -73,12 +78,30 @@ def curl_download(*args, to: nil, **options)
   end
 
   curl("--location", "--remote-time", "--continue-at", continue_at.to_s, "--output", destination, *args, **options)
+rescue ErrorDuringExecution => e
+  # This is a workaround for https://github.com/curl/curl/issues/1618.
+  raise unless e.status.exitstatus == 56 # Unexpected EOF
+
+  raise if args.include?("--http1.1")
+
+  out = curl_output("-V").stdout
+
+  # If `curl` doesn't support HTTP2, the exception is unrelated to this bug.
+  raise unless out.include?("HTTP2")
+
+  # The bug is fixed in `curl` >= 7.60.0.
+  curl_version = out[/curl (\d+(\.\d+)+)/, 1]
+  raise if Gem::Version.new(curl_version) >= Gem::Version.new("7.60.0")
+
+  args << "--http1.1"
+  retry
 end
 
-def curl_output(*args, **options)
-  system_command(curl_executable,
+def curl_output(*args, secrets: [], **options)
+  system_command curl_executable,
                  args:         curl_args(*args, show_output: true, **options),
-                 print_stderr: false)
+                 print_stderr: false,
+                 secrets:      secrets
 end
 
 def curl_check_http_content(url, user_agents: [:default], check_content: false, strict: false)
@@ -90,7 +113,7 @@ def curl_check_http_content(url, user_agents: [:default], check_content: false, 
   user_agents.each do |ua|
     details = curl_http_content_headers_and_checksum(url, hash_needed: hash_needed, user_agent: ua)
     user_agent = ua
-    break if details[:status].to_s.start_with?("2")
+    break if http_status_ok?(details[:status])
   end
 
   unless details[:status]
@@ -100,7 +123,7 @@ def curl_check_http_content(url, user_agents: [:default], check_content: false, 
     return "The URL #{url} is not reachable"
   end
 
-  unless details[:status].start_with? "2"
+  unless http_status_ok?(details[:status])
     return "The URL #{url} is not reachable (HTTP status code #{details[:status]})"
   end
 
@@ -115,8 +138,8 @@ def curl_check_http_content(url, user_agents: [:default], check_content: false, 
   secure_details =
     curl_http_content_headers_and_checksum(secure_url, hash_needed: true, user_agent: user_agent)
 
-  if !details[:status].to_s.start_with?("2") ||
-     !secure_details[:status].to_s.start_with?("2")
+  if !http_status_ok?(details[:status]) ||
+     !http_status_ok?(secure_details[:status])
     return
   end
 
@@ -161,9 +184,12 @@ def curl_check_http_content(url, user_agents: [:default], check_content: false, 
 end
 
 def curl_http_content_headers_and_checksum(url, hash_needed: false, user_agent: :default)
+  file = Tempfile.new.tap(&:close)
+
   max_time = hash_needed ? "600" : "25"
   output, = curl_output(
-    "--connect-timeout", "15", "--include", "--max-time", max_time, "--location", url,
+    "--dump-header", "-", "--output", file.path, "--include", "--location",
+    "--connect-timeout", "15", "--max-time", max_time, url,
     user_agent: user_agent
   )
 
@@ -174,7 +200,7 @@ def curl_http_content_headers_and_checksum(url, hash_needed: false, user_agent: 
     final_url = headers[/^Location:\s*(.*)$/i, 1]&.chomp
   end
 
-  output_hash = Digest::SHA256.digest(output) if hash_needed
+  output_hash = Digest::SHA256.file(file.path) if hash_needed
 
   final_url ||= url
 
@@ -187,4 +213,10 @@ def curl_http_content_headers_and_checksum(url, hash_needed: false, user_agent: 
     file_hash:      output_hash,
     file:           output,
   }
+ensure
+  file.unlink
+end
+
+def http_status_ok?(status)
+  (100..299).cover?(status.to_i)
 end

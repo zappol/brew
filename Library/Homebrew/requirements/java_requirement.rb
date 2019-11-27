@@ -28,8 +28,9 @@ class JavaRequirement < Requirement
   end
 
   def initialize(tags = [])
-    @version = tags.shift if /^\d/ =~ tags.first
+    @version = tags.shift if tags.first&.match?(/^\d/)
     super(tags)
+    @cask = suggestion.token
   end
 
   def message
@@ -106,7 +107,7 @@ class JavaRequirement < Requirement
     javas = []
     javas << Pathname.new(ENV["JAVA_HOME"])/"bin/java" if ENV["JAVA_HOME"]
     jdk = begin
-      Formula["openjdk"]
+      Formula["adoptopenjdk"]
     rescue FormulaUnavailableError
       nil
     end

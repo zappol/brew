@@ -1,6 +1,4 @@
-# Uses ERB so can't use Frozen String Literals until >=Ruby 2.4:
-# https://bugs.ruby-lang.org/issues/12031
-# frozen_string_literal: false
+# frozen_string_literal: true
 
 require "formula"
 require "erb"
@@ -18,14 +16,14 @@ module Homebrew
 
   def man_args
     Homebrew::CLI::Parser.new do
-      usage_banner <<~EOS.freeze
+      usage_banner <<~EOS
         `man` [<options>]
 
         Generate Homebrew's manpages.
       EOS
       switch "--fail-if-changed",
              description: "Return a failing status code if changes are detected in the manpage outputs. This "\
-                          "can be used for CI to be notified when the manpages are out of date. Additionally, "\
+                          "can be used to notify CI when the manpages are out of date. Additionally, "\
                           "the date used in new manpages will match those in the existing manpages (to allow "\
                           "comparison without factoring in the date)."
       switch "--link",
@@ -88,7 +86,7 @@ module Homebrew
       readme.read[/(Former maintainers .*\.)/, 1]
             .gsub(/\[([^\]]+)\]\([^)]+\)/, '\1')
 
-    ERB.new(template, nil, ">").result(variables.instance_eval { binding })
+    ERB.new(template, trim_mode: ">").result(variables.instance_eval { binding })
   end
 
   def sort_key_for_path(path)
@@ -125,7 +123,7 @@ module Homebrew
       ronn.write markup
       ronn.close_write
       ronn_output = ronn.read
-      odie "Got no output from ronn!" unless ronn_output
+      odie "Got no output from ronn!" if ronn_output.blank?
       if format_flag == "--markdown"
         ronn_output = ronn_output.gsub(%r{<var>(.*?)</var>}, "*`\\1`*")
                                  .gsub(/\n\n\n+/, "\n\n")
@@ -181,7 +179,7 @@ module Homebrew
   def cmd_parser_manpage_lines(cmd_parser)
     lines = [format_usage_banner(cmd_parser.usage_banner_text)]
     lines += cmd_parser.processed_options.map do |short, long, _, desc|
-      next if !long.nil? && cmd_parser.global_option?(cmd_parser.option_to_name(long))
+      next if !long.nil? && cmd_parser.global_option?(cmd_parser.option_to_name(long), desc)
 
       generate_option_doc(short, long, desc)
     end.reject(&:blank?)
@@ -196,16 +194,20 @@ module Homebrew
     lines = [format_usage_banner(comment_lines.first).chomp]
     comment_lines.slice(1..-1)
                  .each do |line|
-      line = line.slice(4..-1)
-      next unless line
+      line = line.slice(4..-2)
+      unless line
+        lines.last << "\n"
+        next
+      end
 
       # Omit the common global_options documented separately in the man page.
-      next if line =~ /--(debug|force|help|quiet|verbose) /
+      next if line.match?(/--(debug|force|help|quiet|verbose) /)
 
       # Format one option or a comma-separated pair of short and long options.
       lines << line.gsub(/^ +(-+[a-z-]+), (-+[a-z-]+) +/, "* `\\1`, `\\2`:\n  ")
                    .gsub(/^ +(-+[a-z-]+) +/, "* `\\1`:\n  ")
     end
+    lines.last << "\n"
     lines
   end
 

@@ -26,6 +26,7 @@ RUN localedef -i en_US -f UTF-8 en_US.UTF-8 \
 	&& useradd -m -s /bin/bash linuxbrew \
 	&& echo 'linuxbrew ALL=(ALL) NOPASSWD:ALL' >>/etc/sudoers
 ADD . /home/linuxbrew/.linuxbrew/Homebrew
+ARG FORCE_REBUILD
 RUN cd /home/linuxbrew/.linuxbrew \
 	&& mkdir -p bin etc include lib opt sbin share var/homebrew/linked Cellar \
 	&& ln -s ../Homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/ \
@@ -39,5 +40,5 @@ ENV PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH \
 # Install portable-ruby and tap homebrew/core.
 RUN HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 brew tap homebrew/core \
 	&& chown -R linuxbrew: /home/linuxbrew/.linuxbrew \
-	&& chmod -R o-w /home/linuxbrew/.linuxbrew \
+	&& chmod -R g+w,o-w /home/linuxbrew/.linuxbrew \
 	&& rm -rf ~/.cache

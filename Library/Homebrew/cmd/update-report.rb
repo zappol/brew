@@ -21,7 +21,7 @@ module Homebrew
   def update_report_args
     Homebrew::CLI::Parser.new do
       usage_banner <<~EOS
-        `update_report` [`--preinstall`]
+        `update-report`
 
         The Ruby implementation of `brew update`. Never called manually.
       EOS
@@ -29,8 +29,8 @@ module Homebrew
              description: "Run in 'auto-update' mode (faster, less output)."
       switch :force
       switch :quiet
-      switch :debug
       switch :verbose
+      switch :debug
       hide_from_man_page!
     end
   end
@@ -38,46 +38,35 @@ module Homebrew
   def update_report
     update_report_args.parse
 
+    if !Utils::Analytics.messages_displayed? &&
+       !Utils::Analytics.disabled? &&
+       !Utils::Analytics.no_message_output?
+
+      ENV["HOMEBREW_NO_ANALYTICS_THIS_RUN"] = "1"
+      # Use the shell's audible bell.
+      print "\a"
+
+      # Use an extra newline and bold to avoid this being missed.
+      ohai "Homebrew has enabled anonymous aggregate formulae and cask analytics."
+      puts <<~EOS
+        #{Tty.bold}Read the analytics documentation (and how to opt-out) here:
+          #{Formatter.url("https://docs.brew.sh/Analytics")}#{Tty.reset}
+
+      EOS
+
+      # Consider the messages possibly missed if not a TTY.
+      Utils::Analytics.messages_displayed! if $stdout.tty?
+    end
+
     HOMEBREW_REPOSITORY.cd do
-      analytics_message_displayed =
-        Utils.popen_read("git", "config", "--local", "--get", "homebrew.analyticsmessage").chomp == "true"
-      cask_analytics_message_displayed =
-        Utils.popen_read("git", "config", "--local", "--get", "homebrew.caskanalyticsmessage").chomp == "true"
-      analytics_disabled =
-        Utils.popen_read("git", "config", "--local", "--get", "homebrew.analyticsdisabled").chomp == "true"
-      if !analytics_message_displayed &&
-         !cask_analytics_message_displayed &&
-         !analytics_disabled &&
-         !ENV["HOMEBREW_NO_ANALYTICS"] &&
-         !ENV["HOMEBREW_NO_ANALYTICS_MESSAGE_OUTPUT"]
-
-        ENV["HOMEBREW_NO_ANALYTICS_THIS_RUN"] = "1"
-        # Use the shell's audible bell.
-        print "\a"
-
-        # Use an extra newline and bold to avoid this being missed.
-        ohai "Homebrew has enabled anonymous aggregate formulae and cask analytics."
-        puts <<~EOS
-          #{Tty.bold}Read the analytics documentation (and how to opt-out) here:
-            #{Formatter.url("https://docs.brew.sh/Analytics")}#{Tty.reset}
-
-        EOS
-
-        # Consider the message possibly missed if not a TTY.
-        if $stdout.tty?
-          safe_system "git", "config", "--local", "--replace-all", "homebrew.analyticsmessage", "true"
-          safe_system "git", "config", "--local", "--replace-all", "homebrew.caskanalyticsmessage", "true"
-        end
-      end
-
       donation_message_displayed =
-        Utils.popen_read("git", "config", "--local", "--get", "homebrew.donationmessage").chomp == "true"
+        Utils.popen_read("git", "config", "--get", "homebrew.donationmessage").chomp == "true"
       unless donation_message_displayed
         ohai "Homebrew is run entirely by unpaid volunteers. Please consider donating:"
         puts "  #{Formatter.url("https://github.com/Homebrew/brew#donations")}\n"
 
         # Consider the message possibly missed if not a TTY.
-        safe_system "git", "config", "--local", "--replace-all", "homebrew.donationmessage", "true" if $stdout.tty?
+        safe_system "git", "config", "--replace-all", "homebrew.donationmessage", "true" if $stdout.tty?
       end
     end
 
@@ -226,6 +215,9 @@ class Reporter
           new_version = formula.pkg_version
           old_version = FormulaVersions.new(formula).formula_at_revision(@initial_revision, &:pkg_version)
           next if new_version == old_version
+        rescue FormulaUnavailableError
+          # Don't care if the formula isn't available right now.
+          nil
         rescue Exception => e # rubocop:disable Lint/RescueException
           onoe "#{e.message}\n#{e.backtrace.join "\n"}" if ARGV.homebrew_developer?
         end

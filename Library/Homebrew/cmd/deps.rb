@@ -10,14 +10,14 @@ module Homebrew
   def deps_args
     Homebrew::CLI::Parser.new do
       usage_banner <<~EOS
-        `deps` [<options>] <formula>
+        `deps` [<options>] [<formula>]
 
         Show dependencies for <formula>. Additional options specific to <formula>
         may be appended to the command. When given multiple formula arguments,
         show the intersection of dependencies for each formula.
       EOS
       switch "-n",
-             description: "Show dependencies in topological order."
+             description: "Sort dependencies in topological order."
       switch "--1",
              description: "Only show dependencies one level down, instead of recursing."
       switch "--union",
@@ -47,7 +47,7 @@ module Homebrew
              description: "List dependencies for all available formulae."
       switch "--for-each",
              description: "Switch into the mode used by the `--all` option, but only list dependencies "\
-                          "for the specified <formula>, one formula per line. This is used for "\
+                          "for each provided <formula>, one formula per line. This is used for "\
                           "debugging the `--installed`/`--all` display mode."
       switch :verbose
       switch :debug
@@ -58,53 +58,49 @@ module Homebrew
 
   def deps
     deps_args.parse
-    mode = OpenStruct.new(
-      installed?:  args.installed?,
-      tree?:       args.tree?,
-      all?:        args.all?,
-      topo_order?: args.n?,
-      union?:      args.union?,
-      for_each?:   args.for_each?,
-      recursive?:  !args.send("1?"),
-    )
 
-    if mode.tree?
-      if mode.installed?
-        puts_deps_tree Formula.installed.sort, mode.recursive?
+    Formulary.enable_factory_cache!
+
+    recursive = !args.send("1?")
+
+    if args.tree?
+      if args.installed?
+        puts_deps_tree Formula.installed.sort, recursive
       else
         raise FormulaUnspecifiedError if args.remaining.empty?
 
-        puts_deps_tree ARGV.formulae, mode.recursive?
+        puts_deps_tree ARGV.formulae, recursive
       end
       return
-    elsif mode.all?
-      puts_deps Formula.sort, mode.recursive?
+    elsif args.all?
+      puts_deps Formula.sort, recursive
       return
-    elsif !args.remaining.empty? && mode.for_each?
-      puts_deps ARGV.formulae, mode.recursive?
+    elsif !args.remaining.empty? && args.for_each?
+      puts_deps ARGV.formulae, recursive
       return
     end
 
-    @only_installed_arg = mode.installed? &&
-                          mode.recursive? &&
-                          !args.include_build? &&
-                          !args.include_test? &&
-                          !args.include_optional? &&
-                          !args.skip_recommended?
+    installed = args.installed? || ARGV.formulae.all?(&:opt_or_installed_prefix_keg)
+
+    @use_runtime_dependencies = installed && recursive &&
+                                !args.include_build? &&
+                                !args.include_test? &&
+                                !args.include_optional? &&
+                                !args.skip_recommended?
 
     if args.remaining.empty?
-      raise FormulaUnspecifiedError unless mode.installed?
+      raise FormulaUnspecifiedError unless args.installed?
 
-      puts_deps Formula.installed.sort, mode.recursive?
+      puts_deps Formula.installed.sort, recursive
       return
     end
 
-    all_deps = deps_for_formulae(ARGV.formulae, mode.recursive?, &(mode.union? ? :| : :&))
+    all_deps = deps_for_formulae(ARGV.formulae, recursive, &(args.union? ? :| : :&))
     all_deps = condense_requirements(all_deps)
-    all_deps.select!(&:installed?) if mode.installed?
+    all_deps.select!(&:installed?) if args.installed?
     all_deps.map!(&method(:dep_display_name))
     all_deps.uniq!
-    all_deps.sort! unless mode.topo_order?
+    all_deps.sort! unless args.n?
     puts all_deps
   end
 
@@ -142,7 +138,7 @@ module Homebrew
   def deps_for_formula(f, recursive = false)
     includes, ignores = argv_includes_ignores(ARGV)
 
-    deps = f.runtime_dependencies if @only_installed_arg
+    deps = f.runtime_dependencies if @use_runtime_dependencies
 
     if recursive
       deps ||= recursive_includes(Dependency,  f, includes, ignores)

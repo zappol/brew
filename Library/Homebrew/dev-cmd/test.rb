@@ -24,7 +24,7 @@ module Homebrew
       switch "--HEAD",
              description: "Test the head version of a formula."
       switch "--keep-tmp",
-             description: "Keep the temporary files created for the test."
+             description: "Retain the temporary files created for the test."
       switch :verbose
       switch :debug
       conflicts "--devel", "--HEAD"
@@ -82,7 +82,7 @@ module Homebrew
           --
           #{HOMEBREW_LIBRARY_PATH}/test.rb
           #{f.path}
-        ].concat(ARGV.options_only)
+        ].concat(Homebrew.args.options_only)
 
         if f.head?
           args << "--HEAD"

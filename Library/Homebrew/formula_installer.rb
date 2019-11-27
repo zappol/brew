@@ -18,6 +18,7 @@ require "linkage_checker"
 require "install"
 require "messages"
 require "cask/cask_loader"
+require "find"
 
 class FormulaInstaller
   include FormulaCellarChecks
@@ -201,12 +202,12 @@ class FormulaInstaller
   end
 
   def build_bottle_preinstall
-    @etc_var_glob ||= "#{HOMEBREW_PREFIX}/{etc,var}/**/*"
-    @etc_var_preinstall = Dir[@etc_var_glob]
+    @etc_var_dirs ||= [HOMEBREW_PREFIX/"etc", HOMEBREW_PREFIX/"var"]
+    @etc_var_preinstall = Find.find(*@etc_var_dirs.select(&:directory?)).to_a
   end
 
   def build_bottle_postinstall
-    @etc_var_postinstall = Dir[@etc_var_glob]
+    @etc_var_postinstall = Find.find(*@etc_var_dirs.select(&:directory?)).to_a
     (@etc_var_postinstall - @etc_var_preinstall).each do |file|
       Pathname.new(file).cp_path_sub(HOMEBREW_PREFIX, formula.bottle_prefix)
     end
@@ -289,7 +290,14 @@ class FormulaInstaller
       rescue Exception => e # rubocop:disable Lint/RescueException
         # any exceptions must leave us with nothing installed
         ignore_interrupts do
-          formula.prefix.rmtree if formula.prefix.directory?
+          begin
+            formula.prefix.rmtree if formula.prefix.directory?
+          rescue Errno::EACCES, Errno::ENOTEMPTY
+            odie <<~EOS
+              Could not remove #{formula.prefix.basename} keg! Do so manually:
+                sudo rm -rf #{formula.prefix}
+            EOS
+          end
           formula.rack.rmdir_if_possible
         end
         raise if ARGV.homebrew_developer? ||
@@ -344,28 +352,26 @@ class FormulaInstaller
     return if ARGV.force?
 
     conflicts = formula.conflicts.select do |c|
-      begin
-        f = Formulary.factory(c.name)
-      rescue TapFormulaUnavailableError
-        # If the formula name is a fully-qualified name let's silently
-        # ignore it as we don't care about things used in taps that aren't
-        # currently tapped.
-        false
-      rescue FormulaUnavailableError => e
-        # If the formula name doesn't exist any more then complain but don't
-        # stop installation from continuing.
-        opoo <<~EOS
-          #{formula}: #{e.message}
-          'conflicts_with \"#{c.name}\"' should be removed from #{formula.path.basename}.
-        EOS
+      f = Formulary.factory(c.name)
+    rescue TapFormulaUnavailableError
+      # If the formula name is a fully-qualified name let's silently
+      # ignore it as we don't care about things used in taps that aren't
+      # currently tapped.
+      false
+    rescue FormulaUnavailableError => e
+      # If the formula name doesn't exist any more then complain but don't
+      # stop installation from continuing.
+      opoo <<~EOS
+        #{formula}: #{e.message}
+        'conflicts_with \"#{c.name}\"' should be removed from #{formula.path.basename}.
+      EOS
 
-        raise if ARGV.homebrew_developer?
+      raise if ARGV.homebrew_developer?
 
-        $stderr.puts "Please report this to the #{formula.tap} tap!"
-        false
-      else
-        f.linked_keg.exist? && f.opt_prefix.exist?
-      end
+      $stderr.puts "Please report this to the #{formula.tap} tap!"
+      false
+    else # rubocop:disable Layout/ElseAlignment
+      f.linked_keg.exist? && f.opt_prefix.exist?
     end
 
     raise FormulaConflictError.new(formula, conflicts) unless conflicts.empty?
@@ -472,7 +478,6 @@ class FormulaInstaller
         dependent,
         inherited_options.fetch(dependent.name, []),
       )
-      pour_bottle = true if install_bottle_for?(dep.to_formula, build)
 
       if dep.prune_from_option?(build)
         Dependency.prune
@@ -484,6 +489,8 @@ class FormulaInstaller
         Dependency.prune
       elsif dep.satisfied?(inherited_options[dep.name])
         Dependency.skip
+      else
+        pour_bottle ||= install_bottle_for?(dep.to_formula, build)
       end
     end
 
@@ -567,7 +574,7 @@ class FormulaInstaller
     end
 
     tab_tap = tab.source["tap"]
-    if df.tap.to_s != tab_tap
+    if tab_tap.present? && df.tap.present? && df.tap.to_s != tab_tap.to_s
       odie <<~EOS
         #{df} is already installed from #{tab_tap}!
         Please `brew uninstall #{df}` first."
@@ -776,6 +783,7 @@ class FormulaInstaller
     unless link_keg
       begin
         keg.optlink
+        Formula.clear_cache
       rescue Keg::LinkError => e
         onoe "Failed to create #{formula.opt_prefix}"
         puts "Things that depend on #{formula.full_name} will probably not build."
@@ -941,8 +949,9 @@ class FormulaInstaller
       downloader = LocalBottleDownloadStrategy.new(bottle_path)
     else
       downloader = formula.bottle
-      downloader.verify_download_integrity(downloader.fetch)
+      downloader.fetch
     end
+
     HOMEBREW_CELLAR.cd do
       downloader.stage
     end

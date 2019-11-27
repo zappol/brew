@@ -11,7 +11,7 @@ module Homebrew
       usage_banner <<~EOS
         `bump-formula-pr` [<options>] [<formula>]
 
-        Create a pull request to update a formula with a new URL or a new tag.
+        Create a pull request to update <formula> with a new URL or a new tag.
 
         If a <URL> is specified, the <SHA-256> checksum of the new download should also
         be specified. A best effort to determine the <SHA-256> and <formula> name will
@@ -22,8 +22,7 @@ module Homebrew
 
         *Note:* this command cannot be used to transition a formula from a
         URL-and-SHA-256 style specification into a tag-and-revision style specification,
-        nor vice versa. It must use whichever style specification the preexisting
-        formula already uses.
+        nor vice versa. It must use whichever style specification the formula already uses.
       EOS
       switch "--devel",
              description: "Bump the development rather than stable version. The development spec must already exist."
@@ -39,14 +38,16 @@ module Homebrew
              description: "Run `brew audit --strict` before opening the PR."
       switch "--no-browse",
              description: "Print the pull request URL instead of opening in a browser."
+      switch "--no-fork",
+             description: "Don't try to fork the repository."
       flag   "--mirror=",
-             description: "Use the provided <URL> as a mirror URL."
+             description: "Use the specified <URL> as a mirror URL."
       flag   "--version=",
-             description: "Use the provided <version> to override the value parsed from the URL or tag. Note "\
+             description: "Use the specified <version> to override the value parsed from the URL or tag. Note "\
                           "that `--version=0` can be used to delete an existing version override from a "\
                           "formula if it has become redundant."
       flag   "--message=",
-             description: "Append the provided <message> to the default PR message."
+             description: "Append <message> to the default pull request message."
       flag   "--url=",
              description: "Specify the <URL> for the new download. If a <URL> is specified, the <SHA-256> "\
                           "checksum of the new download should also be specified."
@@ -57,8 +58,7 @@ module Homebrew
              description: "Specify the new git commit <tag> for the formula."
       flag   "--revision=",
              required_for: "--tag=",
-             description:  "Specify the new git commit <revision> corresponding to a specified <tag>."
-
+             description:  "Specify the new git commit <revision> corresponding to the specified <tag>."
       switch :force
       switch :quiet
       switch :verbose
@@ -66,6 +66,42 @@ module Homebrew
       conflicts "--no-audit", "--strict"
       conflicts "--url", "--tag"
     end
+  end
+
+  def use_correct_linux_tap(formula)
+    if OS.linux? && formula.tap.core_tap?
+      tap_full_name = formula.tap.full_name.gsub("linuxbrew", "homebrew")
+      homebrew_core_url = "https://github.com/#{tap_full_name}"
+      homebrew_core_remote = "homebrew"
+      homebrew_core_branch = "master"
+      origin_branch = "#{homebrew_core_remote}/#{homebrew_core_branch}"
+      previous_branch = Utils.popen_read("git -C \"#{formula.tap.path}\" symbolic-ref -q --short HEAD").chomp
+      previous_branch = "master" if previous_branch.empty?
+      formula_path = formula.path.to_s[%r{(Formula\/.*)}, 1]
+
+      if args.dry_run?
+        ohai "git remote add #{homebrew_core_remote} #{homebrew_core_url}"
+        ohai "git fetch #{homebrew_core_remote} #{homebrew_core_branch}"
+        ohai "git cat-file -e #{origin_branch}:#{formula_path}"
+        ohai "git checkout #{origin_branch}"
+        return tap_full_name, origin_branch, previous_branch
+      else
+        formula.path.parent.cd do
+          unless Utils.popen_read("git remote -v").match?(%r{^homebrew.*Homebrew\/homebrew-core.*$})
+            ohai "Adding #{homebrew_core_remote} remote"
+            safe_system "git", "remote", "add", homebrew_core_remote, homebrew_core_url
+          end
+          ohai "Fetching #{origin_branch}"
+          safe_system "git", "fetch", homebrew_core_remote, homebrew_core_branch
+          if quiet_system "git", "cat-file", "-e", "#{origin_branch}:#{formula_path}"
+            ohai "#{formula.full_name} exists in #{origin_branch}"
+            safe_system "git", "checkout", origin_branch
+            return tap_full_name, origin_branch, previous_branch
+          end
+        end
+      end
+    end
+    [formula.tap.full_name, "origin/master", "-"]
   end
 
   def bump_formula_pr
@@ -81,7 +117,8 @@ module Homebrew
     formula = ARGV.formulae.first
 
     if formula
-      check_for_duplicate_pull_requests(formula)
+      tap_full_name, origin_branch, previous_branch = use_correct_linux_tap(formula)
+      check_for_duplicate_pull_requests(formula, tap_full_name)
       checked_for_duplicates = true
     end
 
@@ -113,7 +150,7 @@ module Homebrew
     end
     raise FormulaUnspecifiedError unless formula
 
-    check_for_duplicate_pull_requests(formula) unless checked_for_duplicates
+    check_for_duplicate_pull_requests(formula, tap_full_name) unless checked_for_duplicates
 
     requested_spec, formula_spec = if args.devel?
       devel_message = " (devel)"
@@ -158,7 +195,7 @@ module Homebrew
         gnu_tar_gtar_path = HOMEBREW_PREFIX/"opt/gnu-tar/bin/gtar"
         gnu_tar_gtar = gnu_tar_gtar_path if gnu_tar_gtar_path.executable?
         tar = which("gtar") || gnu_tar_gtar || which("tar")
-        if Utils.popen_read(tar, "-tf", resource_path) =~ %r{/.*\.}
+        if Utils.popen_read(tar, "-tf", resource_path).match?(%r{/.*\.})
           new_hash = resource_path.sha256
         else
           odie "#{resource_path} is not a valid tar file!"
@@ -273,77 +310,48 @@ module Homebrew
       EOS
     end
 
-    if args.dry_run?
-      if args.no_audit?
-        ohai "Skipping `brew audit`"
-      elsif args.strict?
-        ohai "brew audit --strict #{formula.path.basename}"
-      else
-        ohai "brew audit #{formula.path.basename}"
-      end
-    else
-      failed_audit = false
-      if args.no_audit?
-        ohai "Skipping `brew audit`"
-      elsif args.strict?
-        system HOMEBREW_BREW_FILE, "audit", "--strict", formula.path
-        failed_audit = !$CHILD_STATUS.success?
-      else
-        system HOMEBREW_BREW_FILE, "audit", formula.path
-        failed_audit = !$CHILD_STATUS.success?
-      end
-      if failed_audit
-        formula.path.atomic_write(backup_file)
-        odie "brew audit failed!"
-      end
+    alias_rename = alias_update_pair(formula, new_formula_version)
+    if alias_rename.present?
+      ohai "renaming alias #{alias_rename.first} to #{alias_rename.last}"
+      alias_rename.map! { |a| formula.tap.alias_dir/a }
     end
+
+    run_audit(formula, alias_rename, backup_file)
 
     formula.path.parent.cd do
       branch = "#{formula.name}-#{new_formula_version}"
       git_dir = Utils.popen_read("git rev-parse --git-dir").chomp
       shallow = !git_dir.empty? && File.exist?("#{git_dir}/shallow")
+      changed_files = [formula.path]
+      changed_files += alias_rename if alias_rename.present?
 
       if args.dry_run?
-        ohai "try to fork repository with GitHub API"
+        ohai "try to fork repository with GitHub API" unless args.no_fork?
         ohai "git fetch --unshallow origin" if shallow
-        ohai "git checkout --no-track -b #{branch} origin/master"
+        ohai "git add #{alias_rename.first} #{alias_rename.last}" if alias_rename.present?
+        ohai "git checkout --no-track -b #{branch} #{origin_branch}"
         ohai "git commit --no-edit --verbose --message='#{formula.name} " \
-             "#{new_formula_version}#{devel_message}' -- #{formula.path}"
+             "#{new_formula_version}#{devel_message}' -- #{changed_files.join(" ")}"
         ohai "git push --set-upstream $HUB_REMOTE #{branch}:#{branch}"
-        ohai "git checkout --quiet -"
+        ohai "git checkout --quiet #{previous_branch}"
         ohai "create pull request with GitHub API"
       else
 
-        begin
-          response = GitHub.create_fork(formula.tap.full_name)
-          # GitHub API responds immediately but fork takes a few seconds to be ready.
-          sleep 3
-
-          if system("git", "config", "--local", "--get-regexp", "remote\..*\.url", "git@github.com:.*")
-            remote_url = response.fetch("ssh_url")
-          else
-            remote_url = response.fetch("clone_url")
-          end
-          username = response.fetch("owner").fetch("login")
-        rescue GitHub::AuthenticationFailedError => e
-          raise unless e.github_message =~ /forking is disabled/
-
-          # If the repository is private, forking might be disabled.
-          # Create branches in the repository itself instead.
+        if args.no_fork?
           remote_url = Utils.popen_read("git remote get-url --push origin").chomp
           username = formula.tap.user
-        rescue *GitHub.api_errors => e
-          formula.path.atomic_write(backup_file) unless args.dry_run?
-          odie "Unable to fork: #{e.message}!"
+        else
+          remote_url, username = forked_repo_info(formula, tap_full_name, backup_file)
         end
 
         safe_system "git", "fetch", "--unshallow", "origin" if shallow
-        safe_system "git", "checkout", "--no-track", "-b", branch, "origin/master"
+        safe_system "git", "add", *alias_rename if alias_rename.present?
+        safe_system "git", "checkout", "--no-track", "-b", branch, origin_branch
         safe_system "git", "commit", "--no-edit", "--verbose",
                     "--message=#{formula.name} #{new_formula_version}#{devel_message}",
-                    "--", formula.path
+                    "--", *changed_files
         safe_system "git", "push", "--set-upstream", remote_url, "#{branch}:#{branch}"
-        safe_system "git", "checkout", "--quiet", "-"
+        safe_system "git", "checkout", "--quiet", previous_branch
         pr_message = <<~EOS
           Created with `brew bump-formula-pr`.
         EOS
@@ -358,7 +366,7 @@ module Homebrew
         pr_title = "#{formula.name} #{new_formula_version}#{devel_message}"
 
         begin
-          url = GitHub.create_pull_request(formula.tap.full_name, pr_title,
+          url = GitHub.create_pull_request(tap_full_name, pr_title,
                                            "#{username}:#{branch}", "master", pr_message)["html_url"]
           if args.no_browse?
             puts url
@@ -370,6 +378,23 @@ module Homebrew
         end
       end
     end
+  end
+
+  def forked_repo_info(formula, tap_full_name, backup_file)
+    response = GitHub.create_fork(tap_full_name)
+  rescue GitHub::AuthenticationFailedError, *GitHub.api_errors => e
+    formula.path.atomic_write(backup_file)
+    odie "Unable to fork: #{e.message}!"
+  else
+    # GitHub API responds immediately but fork takes a few seconds to be ready.
+    sleep 1 until GitHub.check_fork_exists(tap_full_name)
+    remote_url = if system("git", "config", "--local", "--get-regexp", "remote\..*\.url", "git@github.com:.*")
+      response.fetch("ssh_url")
+    else
+      response.fetch("clone_url")
+    end
+    username = response.fetch("owner").fetch("login")
+    [remote_url, username]
   end
 
   def inreplace_pairs(path, replacement_pairs)
@@ -409,8 +434,8 @@ module Homebrew
     end
   end
 
-  def fetch_pull_requests(formula)
-    GitHub.issues_for_formula(formula.name, tap: formula.tap).select do |pr|
+  def fetch_pull_requests(formula, tap_full_name)
+    GitHub.issues_for_formula(formula.name, tap_full_name: tap_full_name).select do |pr|
       pr["html_url"].include?("/pull/") &&
         /(^|\s)#{Regexp.quote(formula.name)}(:|\s|$)/i =~ pr["title"]
     end
@@ -419,8 +444,8 @@ module Homebrew
     []
   end
 
-  def check_for_duplicate_pull_requests(formula)
-    pull_requests = fetch_pull_requests(formula)
+  def check_for_duplicate_pull_requests(formula, tap_full_name)
+    pull_requests = fetch_pull_requests(formula, tap_full_name)
     return unless pull_requests
     return if pull_requests.empty?
 
@@ -439,5 +464,46 @@ module Homebrew
         #{error_message}
       EOS
     end
+  end
+
+  def alias_update_pair(formula, new_formula_version)
+    versioned_alias = formula.aliases.grep(/^.*@\d+(\.\d+)?$/).first
+    return if versioned_alias.nil?
+
+    name, old_alias_version = versioned_alias.split("@")
+    new_alias_regex = (old_alias_version.split(".").length == 1) ? /^\d+/ : /^\d+\.\d+/
+    new_alias_version, = *new_formula_version.to_s.match(new_alias_regex)
+    return if Version.create(new_alias_version) <= Version.create(old_alias_version)
+
+    [versioned_alias, "#{name}@#{new_alias_version}"]
+  end
+
+  def run_audit(formula, alias_rename, backup_file)
+    if args.dry_run?
+      if args.no_audit?
+        ohai "Skipping `brew audit`"
+      elsif args.strict?
+        ohai "brew audit --strict #{formula.path.basename}"
+      else
+        ohai "brew audit #{formula.path.basename}"
+      end
+      return
+    end
+    FileUtils.mv alias_rename.first, alias_rename.last if alias_rename.present?
+    failed_audit = false
+    if args.no_audit?
+      ohai "Skipping `brew audit`"
+    elsif args.strict?
+      system HOMEBREW_BREW_FILE, "audit", "--strict", formula.path
+      failed_audit = !$CHILD_STATUS.success?
+    else
+      system HOMEBREW_BREW_FILE, "audit", formula.path
+      failed_audit = !$CHILD_STATUS.success?
+    end
+    return unless failed_audit
+
+    formula.path.atomic_write(backup_file)
+    FileUtils.mv alias_rename.last, alias_rename.first if alias_rename.present?
+    odie "brew audit failed!"
   end
 end

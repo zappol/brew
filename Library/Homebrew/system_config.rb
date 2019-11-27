@@ -4,6 +4,7 @@ require "hardware"
 require "software_spec"
 require "rexml/document"
 require "development_tools"
+require "extend/ENV"
 
 class SystemConfig
   class << self
@@ -169,10 +170,11 @@ class SystemConfig
       unless ENV["HOMEBREW_ENV"]
         ENV.sort.each do |key, value|
           next unless key.start_with?("HOMEBREW_")
+          next if key.start_with?("HOMEBREW_BUNDLE_")
           next if boring_keys.include?(key)
           next if defaults_hash[key.to_sym]
 
-          value = "set" if key =~ /(cookie|key|token|password)/i
+          value = "set" if ENV.sensitive?(key)
           f.puts "#{key}: #{value}"
         end
       end

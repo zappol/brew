@@ -34,7 +34,7 @@ class SystemCommand
   end
 
   def run!
-    puts command.shelljoin.gsub(/\\=/, "=") if verbose? || ARGV.debug?
+    puts redact_secrets(command.shelljoin.gsub('\=', "="), @secrets) if verbose? || ARGV.debug?
 
     @output = []
 
@@ -49,13 +49,15 @@ class SystemCommand
       end
     end
 
-    assert_success if must_succeed?
+    result = Result.new(command, @output, @status, secrets: @secrets)
+    result.assert_success! if must_succeed?
     result
   end
 
   def initialize(executable, args: [], sudo: false, env: {}, input: [], must_succeed: false,
-                 print_stdout: false, print_stderr: true, verbose: false, **options)
+                 print_stdout: false, print_stderr: true, verbose: false, secrets: [], **options)
 
+    require "extend/ENV"
     @executable = executable
     @args = args
     @sudo = sudo
@@ -63,6 +65,7 @@ class SystemCommand
     @print_stdout = print_stdout
     @print_stderr = print_stderr
     @verbose = verbose
+    @secrets = (Array(secrets) + ENV.sensitive_environment.values).uniq
     @must_succeed = must_succeed
     options.assert_valid_keys!(:chdir)
     @options = options
@@ -93,7 +96,7 @@ class SystemCommand
 
     return [] if set_variables.empty?
 
-    ["env", *set_variables]
+    ["/usr/bin/env", *set_variables]
   end
 
   def sudo_prefix
@@ -101,14 +104,6 @@ class SystemCommand
 
     askpass_flags = ENV.key?("SUDO_ASKPASS") ? ["-A"] : []
     ["/usr/bin/sudo", *askpass_flags, "-E", "--"]
-  end
-
-  def assert_success
-    return if @status.success?
-
-    raise ErrorDuringExecution.new(command,
-                                   status: @status,
-                                   output: @output)
   end
 
   def expanded_args
@@ -153,31 +148,32 @@ class SystemCommand
       break if readable_sources.empty?
 
       readable_sources.each do |source|
-        begin
-          line = source.readline_nonblock || ""
-          type = (source == sources[0]) ? :stdout : :stderr
-          yield(type, line)
-        rescue IO::WaitReadable, EOFError
-          next
-        end
+        line = source.readline_nonblock || ""
+        type = (source == sources[0]) ? :stdout : :stderr
+        yield(type, line)
+      rescue IO::WaitReadable, EOFError
+        next
       end
     end
 
     sources.each(&:close_read)
   end
 
-  def result
-    Result.new(command, @output, @status)
-  end
-
   class Result
     attr_accessor :command, :status, :exit_status
 
-    def initialize(command, output, status)
+    def initialize(command, output, status, secrets:)
       @command       = command
       @output        = output
       @status        = status
       @exit_status   = status.exitstatus
+      @secrets       = secrets
+    end
+
+    def assert_success!
+      return if @status.success?
+
+      raise ErrorDuringExecution.new(command, status: @status, output: @output, secrets: @secrets)
     end
 
     def stdout
@@ -227,7 +223,7 @@ class SystemCommand
 
     def warn_plist_garbage(garbage)
       return unless ARGV.verbose?
-      return unless garbage =~ /\S/
+      return unless garbage.match?(/\S/)
 
       opoo "Received non-XML output from #{Formatter.identifier(command.first)}:"
       $stderr.puts garbage.strip

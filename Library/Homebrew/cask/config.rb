@@ -54,7 +54,15 @@ module Cask
     end
 
     def self.canonicalize(config)
-      config.map { |k, v| [k.to_sym, Pathname(v).expand_path] }.to_h
+      config.map do |k, v|
+        key = k.to_sym
+
+        if DEFAULT_DIRS.key?(key)
+          [key, Pathname(v).expand_path]
+        else
+          [key, v]
+        end
+      end.to_h
     end
 
     attr_accessor :explicit
@@ -83,6 +91,10 @@ module Cask
 
     def binarydir
       @binarydir ||= HOMEBREW_PREFIX/"bin"
+    end
+
+    def manpagedir
+      @manpagedir ||= HOMEBREW_PREFIX/"share/man"
     end
 
     DEFAULT_DIRS.keys.each do |dir|

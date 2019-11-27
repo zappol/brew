@@ -6,7 +6,7 @@ module Utils
       undef tag
 
       def tag
-        MacOS.cat
+        MacOS.version.to_sym
       end
     end
 
@@ -16,29 +16,27 @@ module Utils
       alias generic_find_matching_tag find_matching_tag
 
       def find_matching_tag(tag)
-        generic_find_matching_tag(tag) ||
-          find_older_compatible_tag(tag)
-      end
-
-      def tag_without_or_later(tag)
-        tag
+        # Used primarily by developers testing beta macOS releases.
+        if OS::Mac.prerelease? && ARGV.skip_or_later_bottles?
+          generic_find_matching_tag(tag)
+        else
+          generic_find_matching_tag(tag) ||
+            find_older_compatible_tag(tag)
+        end
       end
 
       # Find a bottle built for a previous version of macOS.
       def find_older_compatible_tag(tag)
-        begin
-          tag_version = MacOS::Version.from_symbol(tag)
+        tag_version = begin
+          MacOS::Version.from_symbol(tag)
         rescue ArgumentError
           return
         end
 
         keys.find do |key|
-          key_tag_version = tag_without_or_later(key)
-          begin
-            MacOS::Version.from_symbol(key_tag_version) <= tag_version
-          rescue ArgumentError
-            false
-          end
+          MacOS::Version.from_symbol(key) <= tag_version
+        rescue ArgumentError
+          false
         end
       end
     end

@@ -126,10 +126,13 @@ module GitHub
     @api_credentials_error_message ||= begin
       unauthorized = (response_headers["http/1.1"] == "401 Unauthorized")
       scopes = response_headers["x-accepted-oauth-scopes"].to_s.split(", ")
-      if unauthorized && scopes.empty?
+      if unauthorized && scopes.blank?
         needed_human_scopes = needed_scopes.join(", ")
-        needed_human_scopes = "none" if needed_human_scopes.empty?
         credentials_scopes = response_headers["x-oauth-scopes"]
+        return if needed_human_scopes.blank? && credentials_scopes.blank?
+
+        needed_human_scopes = "none" if needed_human_scopes.blank?
+        credentials_scopes = "none" if credentials_scopes.blank?
 
         case GitHub.api_credentials_type
         when :keychain
@@ -160,7 +163,8 @@ module GitHub
     # This is a no-op if the user is opting out of using the GitHub API.
     return block_given? ? yield({}) : {} if ENV["HOMEBREW_NO_GITHUB_API"]
 
-    args = ["--header", "application/vnd.github.v3+json", "--write-out", "\n%{http_code}"]
+    args = ["--header", "Accept: application/vnd.github.v3+json", "--write-out", "\n%\{http_code}"]
+    args += ["--header", "Accept: application/vnd.github.antiope-preview+json"]
 
     token, username = api_credentials
     case api_credentials_type
@@ -192,7 +196,7 @@ module GitHub
 
       args += ["--dump-header", headers_tmpfile.path]
 
-      output, errors, status = curl_output("--location", url.to_s, *args)
+      output, errors, status = curl_output("--location", url.to_s, *args, secrets: [token])
       output, _, http_code = output.rpartition("\n")
       output, _, http_code = output.rpartition("\n") if http_code == "000"
       headers = headers_tmpfile.read
@@ -258,6 +262,19 @@ module GitHub
     end
   end
 
+  def check_runs(repo: nil, commit: nil, pr: nil)
+    if pr
+      repo = pr.fetch("base").fetch("repo").fetch("full_name")
+      commit = pr.fetch("head").fetch("sha")
+    end
+
+    open_api(url_to("repos", repo, "commits", commit, "check-runs"))
+  end
+
+  def create_check_run(repo:, data:)
+    open_api(url_to("repos", repo, "check-runs"), data: data)
+  end
+
   def search_issues(query, **qualifiers)
     search("issues", query, **qualifiers)
   end
@@ -272,7 +289,8 @@ module GitHub
 
   def issues_for_formula(name, options = {})
     tap = options[:tap] || CoreTap.instance
-    search_issues(name, state: "open", repo: tap.full_name, in: "title")
+    tap_full_name = options[:tap_full_name] || tap.full_name
+    search_issues(name, state: "open", repo: tap_full_name, in: "title")
   end
 
   def user
@@ -320,6 +338,22 @@ module GitHub
     data = {}
     scopes = CREATE_ISSUE_FORK_OR_PR_SCOPES
     open_api(url, data: data, scopes: scopes)
+  end
+
+  def check_fork_exists(repo)
+    _, reponame = repo.split("/")
+
+    case api_credentials_type
+    when :keychain
+      _, username = api_credentials
+    when :environment
+      username = open_api(url_to("user")) { |json| json["login"] }
+    end
+    json = open_api(url_to("repos", username, reponame))
+
+    return false if json["message"] == "Not Found"
+
+    true
   end
 
   def create_pull_request(repo, title, head, base, body)

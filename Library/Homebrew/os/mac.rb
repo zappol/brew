@@ -37,29 +37,25 @@ module OS
 
     def latest_sdk_version
       # TODO: bump version when new Xcode macOS SDK is released
-      Version.new "10.14"
+      Version.new "10.15"
     end
 
     def latest_stable_version
       # TODO: bump version when new macOS is released and also update
       # references in docs/Installation.md and
       # https://github.com/Homebrew/install/blob/master/install
-      Version.new "10.14"
+      Version.new "10.15"
     end
 
     def outdated_release?
       # TODO: bump version when new macOS is released and also update
       # references in docs/Installation.md and
       # https://github.com/Homebrew/install/blob/master/install
-      version < "10.12"
+      version < "10.13"
     end
 
     def prerelease?
       version > latest_stable_version
-    end
-
-    def cat
-      version.to_sym
     end
 
     def languages
@@ -208,6 +204,7 @@ module OS
       "10.1"   => { clang: "10.0", clang_build: 1000 },
       "10.2"   => { clang: "10.0", clang_build: 1001 },
       "10.2.1" => { clang: "10.0", clang_build: 1001 },
+      "11.0"   => { clang: "11.0", clang_build: 1100 },
     }.freeze
 
     def compilers_standard?

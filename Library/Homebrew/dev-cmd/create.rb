@@ -23,24 +23,32 @@ module Homebrew
              description: "Create a basic template for an Autotools-style build."
       switch "--cmake",
              description: "Create a basic template for a CMake-style build."
+      switch "--go",
+             description: "Create a basic template for a Go build."
       switch "--meson",
              description: "Create a basic template for a Meson-style build."
+      switch "--perl",
+             description: "Create a basic template for a Perl build."
+      switch "--python",
+             description: "Create a basic template for a Python build."
+      switch "--rust",
+             description: "Create a basic template for a Rust build."
       switch "--no-fetch",
-             description: "Homebrew will not download <URL> to the cache and will thus not add the SHA-256 "\
+             description: "Homebrew will not download <URL> to the cache and will thus not add its SHA-256 "\
                           "to the formula for you, nor will it check the GitHub API for GitHub projects "\
                           "(to fill out its description and homepage)."
       switch "--HEAD",
              description: "Indicate that <URL> points to the package's repository rather than a file."
       flag   "--set-name=",
-             description: "Set the name of the new formula to the provided <name>."
+             description: "Explicitly set the <name> of the new formula."
       flag   "--set-version=",
-             description: "Set the version of the new formula to the provided <version>."
+             description: "Explicitly set the <version> of the new formula."
       flag   "--tap=",
-             description: "Generate the new formula in the provided tap, specified as <user>`/`<repo>."
+             description: "Generate the new formula within the given tap, specified as <user>`/`<repo>."
       switch :force
       switch :verbose
       switch :debug
-      conflicts "--autotools", "--cmake", "--meson"
+      conflicts "--autotools", "--cmake", "--go", "--meson", "--perl", "--python", "--rust"
     end
   end
 
@@ -73,6 +81,14 @@ module Homebrew
       :autotools
     elsif args.meson?
       :meson
+    elsif args.go?
+      :go
+    elsif args.perl?
+      :perl
+    elsif args.python?
+      :python
+    elsif args.rust?
+      :rust
     end
 
     if fc.name.nil? || fc.name.strip.empty?

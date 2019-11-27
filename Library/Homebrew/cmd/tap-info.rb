@@ -10,15 +10,16 @@ module Homebrew
       usage_banner <<~EOS
         `tap-info` [<options>] [<tap>]
 
-        Display detailed information about one or more provided <tap>.
-        Display a brief summary of all installed taps if no <tap> are passed.
+        Show detailed information about one or more <tap>s.
+
+        If no <tap> names are provided, display brief statistics for all installed taps.
       EOS
       switch "--installed",
-             description: "Display information on all installed taps."
-      flag "--json",
-           description: "Print a JSON representation of <taps>. Currently the default and only accepted "\
-                        "value for <version> is `v1`. See the docs for examples of using the JSON "\
-                        "output: <https://docs.brew.sh/Querying-Brew>"
+             description: "Show information on each installed tap."
+      flag   "--json",
+             description: "Print a JSON representation of <tap>. Currently the default and only accepted "\
+                          "value for <version> is `v1`. See the docs for examples of using the JSON "\
+                          "output: <https://docs.brew.sh/Querying-Brew>"
       switch :debug
     end
   end
@@ -62,7 +63,7 @@ module Homebrew
       info += ", #{private_count} private"
       info += ", #{formula_count} #{"formula".pluralize(formula_count)}"
       info += ", #{command_count} #{"command".pluralize(command_count)}"
-      info += ", #{Tap::TAP_DIRECTORY.abv}" if Tap::TAP_DIRECTORY.directory?
+      info += ", #{Tap::TAP_DIRECTORY.dup.abv}" if Tap::TAP_DIRECTORY.directory?
       puts info
     else
       taps.each_with_index do |tap, i|

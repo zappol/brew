@@ -17,7 +17,7 @@ module Homebrew
         Uninstall <formula>.
       EOS
       switch :force,
-             description: "Delete all installed versions of the <formula>"
+             description: "Delete all installed versions of <formula>."
       switch "--ignore-dependencies",
              description: "Don't fail uninstall, even if <formula> is a dependency of any installed "\
                           "formulae."
@@ -38,7 +38,7 @@ module Homebrew
         [rack, rack.subdirs.map { |d| Keg.new(d) }]
       end]
     else
-      ARGV.kegs.group_by(&:rack)
+      Homebrew.args.kegs.group_by(&:rack)
     end
 
     handle_unsatisfied_dependents(kegs_by_rack)

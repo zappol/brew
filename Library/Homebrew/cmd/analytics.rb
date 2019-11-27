@@ -8,14 +8,14 @@ module Homebrew
   def analytics_args
     Homebrew::CLI::Parser.new do
       usage_banner <<~EOS
-        `analytics` [`on`|`off`|`state`|`regenerate-uuid`]
+        `analytics` [<subcommand>]
 
         If `on` or `off` is passed, turn Homebrew's analytics on or off respectively.
 
-        If `state` is passed, display anonymous user behaviour analytics state.
+        If `state` is passed, display the current anonymous user behaviour analytics state.
         Read more at <https://docs.brew.sh/Analytics>.
 
-        If `regenerate-uuid` is passed, regenerate UUID used in Homebrew's analytics.
+        If `regenerate-uuid` is passed, regenerate the UUID used in Homebrew's analytics.
       EOS
       switch :verbose
       switch :debug
@@ -24,36 +24,23 @@ module Homebrew
 
   def analytics
     analytics_args.parse
-    config_file = HOMEBREW_REPOSITORY/".git/config"
 
     raise UsageError if args.remaining.size > 1
 
     case args.remaining.first
     when nil, "state"
-      analyticsdisabled =
-        Utils.popen_read("git config --file=#{config_file} --get homebrew.analyticsdisabled").chomp
-      uuid =
-        Utils.popen_read("git config --file=#{config_file} --get homebrew.analyticsuuid").chomp
-      if ENV["HOMEBREW_NO_ANALYTICS"]
-        puts "Analytics is disabled (by HOMEBREW_NO_ANALYTICS)."
-      elsif analyticsdisabled == "true"
-        puts "Analytics is disabled."
+      if Utils::Analytics.disabled?
+        puts "Analytics are disabled."
       else
-        puts "Analytics is enabled."
-        puts "UUID: #{uuid}" if uuid.present?
+        puts "Analytics are enabled."
+        puts "UUID: #{Utils::Analytics.uuid}" if Utils::Analytics.uuid.present?
       end
     when "on"
-      safe_system "git", "config", "--file=#{config_file}",
-                  "--replace-all", "homebrew.analyticsdisabled", "false"
-      safe_system "git", "config", "--file=#{config_file}",
-                  "--replace-all", "homebrew.analyticsmessage", "true"
+      Utils::Analytics.enable!
     when "off"
-      safe_system "git", "config", "--file=#{config_file}",
-                  "--replace-all", "homebrew.analyticsdisabled", "true"
-      system "git", "config", "--file=#{config_file}", "--unset-all", "homebrew.analyticsuuid"
+      Utils::Analytics.disable!
     when "regenerate-uuid"
-      # it will be regenerated in next run.
-      system "git", "config", "--file=#{config_file}", "--unset-all", "homebrew.analyticsuuid"
+      Utils::Analytics.regenerate_uuid!
     else
       raise UsageError
     end

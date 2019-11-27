@@ -84,7 +84,7 @@ so you can override this with `brew create <URL> --set-name <name>`.
 
 An SSL/TLS (https) [`homepage`](https://rubydoc.brew.sh/Formula#homepage%3D-class_method) is preferred, if one is available.
 
-Try to summarize from the [`homepage`](https://rubydoc.brew.sh/Formula#homepage%3D-class_method) what the formula does in the [`desc`](https://rubydoc.brew.sh/Formula#desc%3D-class_method)ription. Note that the [`desc`](https://rubydoc.brew.sh/Formula#desc%3D-class_method)ription is automatically prepended with the formula name.
+Try to summarise from the [`homepage`](https://rubydoc.brew.sh/Formula#homepage%3D-class_method) what the formula does in the [`desc`](https://rubydoc.brew.sh/Formula#desc%3D-class_method)ription. Note that the [`desc`](https://rubydoc.brew.sh/Formula#desc%3D-class_method)ription is automatically prepended with the formula name.
 
 ### Check the build system
 
@@ -257,13 +257,43 @@ function. The environment variable `HOME` is set to [`testpath`](https://rubydoc
 
 We want tests that don't require any user input and test the basic functionality of the application. For example `foo build-foo input.foo` is a good test and (despite their widespread use) `foo --version` and `foo --help` are bad tests. However, a bad test is better than no test at all.
 
-See [`cmake`](https://github.com/Homebrew/homebrew-core/blob/master/Formula/cmake.rb) for an example of a formula with a good test. The formula writes a basic `CMakeLists.txt` file into the test directory then calls CMake to generate Makefiles. This test checks that CMake doesn't e.g. segfault during basic operation. Another good example is [`tinyxml2`](https://github.com/Homebrew/homebrew-core/blob/master/Formula/tinyxml2.rb), which writes a small C++ source file into the test directory, compiles and links it against the tinyxml2 library and finally checks that the resulting program runs successfully.
+See [`cmake`](https://github.com/Homebrew/homebrew-core/blob/master/Formula/cmake.rb) for an example of a formula with a good test. The formula writes a basic `CMakeLists.txt` file into the test directory then calls CMake to generate Makefiles. This test checks that CMake doesn't e.g. segfault during basic operation.
+
+You can check that the output is as expected with `assert_equal` or `assert_match` on the output of shell_output such as in this example from the [envv formula](https://github.com/Homebrew/homebrew-core/blob/master/Formula/envv.rb):
+
+```ruby
+assert_equal "mylist=A:C; export mylist", shell_output("#{bin}/envv del mylist B").strip
+```
+
+You can also check that an output file was created:
+
+```ruby
+assert_predicate testpath/"output.txt", :exist?
+```
+
+Some advice for specific cases:
+* If the formula is a library, compile and run some simple code that links against it. It could be taken from upstream's documentation / source examples.
+A good example is [`tinyxml2`](https://github.com/Homebrew/homebrew-core/blob/master/Formula/tinyxml2.rb), which writes a small C++ source file into the test directory, compiles and links it against the tinyxml2 library and finally checks that the resulting program runs successfully.
+* If the formula is for a GUI program, try to find some function that runs as command-line only, like a format conversion, reading or displaying a config file, etc.
+* If the software cannot function without credentials or requires a virtual machine, docker instance, etc. to run, a test could be to try to connect with invalid credentials (or without credentials) and confirm that it fails as expected.
 
 ### Manuals
 
 Homebrew expects to find manual pages in `#{prefix}/share/man/...`, and not in `#{prefix}/man/...`.
 
 Some software installs to `man` instead of `share/man`, so check the output and add a `"--mandir=#{man}"` to the `./configure` line if needed.
+
+### Caveats
+
+In case there are specific issues with the Homebrew packaging (compared to how the software is installed from other sources) a `caveats` block can be added to the formula to warn users. This can indicate non-standard install paths, an example from the `ruby` formula:
+
+```
+==> Caveats
+By default, binaries installed by gem will be placed into:
+  /usr/local/lib/ruby/gems/bin
+
+You may want to add this to your PATH.
+```
 
 ### A quick word on naming
 
@@ -302,7 +332,7 @@ correct. Add an explicit [`version`](https://rubydoc.brew.sh/Formula#version-cla
 Everything is built on Git, so contribution is easy:
 
 ```sh
-brew update # required in more ways than you think (initializes the brew git repository if you don't already have it)
+brew update # required in more ways than you think (initialises the brew git repository if you don't already have it)
 cd $(brew --repo homebrew/core)
 # Create a new git branch for your formula so your pull request is easy to
 # modify if any changes come up during review.
@@ -757,6 +787,14 @@ brew search --fink foo
 ## Fortran
 
 Some software requires a Fortran compiler. This can be declared by adding `depends_on "gcc"` to a formula.
+
+## MPI
+
+Formula requiring MPI should use [OpenMPI](https://www.open-mpi.org/) by adding `depends_on "open-mpi"` to the formula, rather than [MPICH](https://www.mpich.org/). These packages have conflicts and provide the same standardised interfaces. Choosing a default implementation and requiring it to be adopted allows software to link against multiple libraries that rely on MPI without creating un-anticipated incompatibilities due to differing MPI runtimes.
+
+## Linear algebra libraries
+
+By default packages that require BLAS/LAPACK linear algebra interfaces should link to [OpenBLAS](https://www.openblas.net/) using `depends_on "openblas"` and passing `-DBLA_VENDOR=OpenBLAS` to CMake (applies to CMake based formula only) rather than Apple's Accelerate framework, or the default reference lapack implementation. Apple's implementation of BLAS/LAPACK is outdated and may introduce hard-to-debug problems. The reference `lapack` formula is fine, although it is not actively maintained or tuned. For this reason, formulae needing BLAS/LAPACK should link with OpenBLAS.
 
 ## How to start over (reset to upstream `master`)
 

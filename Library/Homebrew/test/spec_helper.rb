@@ -4,7 +4,7 @@ if ENV["HOMEBREW_TESTS_COVERAGE"]
   require "simplecov"
 
   formatters = [SimpleCov::Formatter::HTMLFormatter]
-  if ENV["HOMEBREW_COVERALLS_REPO_TOKEN"]
+  if ENV["HOMEBREW_COVERALLS_REPO_TOKEN"] && RUBY_PLATFORM[/darwin/]
     require "coveralls"
 
     Coveralls::Output.no_color if !ENV["HOMEBREW_COLOR"] && (ENV["HOMEBREW_NO_COLOR"] || !$stdout.tty?)
@@ -19,17 +19,15 @@ if ENV["HOMEBREW_TESTS_COVERAGE"]
     end
 
     ENV["CI_NAME"] = ENV["HOMEBREW_CI_NAME"]
-    ENV["CI_JOB_ID"] = ENV["TEST_ENV_NUMBER"] || "1"
-    ENV["CI_BUILD_NUMBER"] = ENV["HOMEBREW_CI_BUILD_NUMBER"]
-    ENV["CI_BUILD_URL"] = ENV["HOMEBREW_CI_BUILD_URL"]
-    ENV["CI_BRANCH"] = ENV["HOMEBREW_CI_BRANCH"]
-    ENV["CI_PULL_REQUEST"] = ENV["HOMEBREW_CI_PULL_REQUEST"]
     ENV["COVERALLS_REPO_TOKEN"] = ENV["HOMEBREW_COVERALLS_REPO_TOKEN"]
-  end
 
-  if ENV["HOMEBREW_AZURE_PIPELINES"]
-    require "simplecov-cobertura"
-    formatters << SimpleCov::Formatter::CoberturaFormatter
+    ENV["CI_BUILD_NUMBER"] = ENV["HOMEBREW_CI_BUILD_NUMBER"]
+    ENV["CI_BRANCH"] = ENV["HOMEBREW_CI_BRANCH"]
+    %r{refs/pull/(?<pr>\d+)/merge} =~ ENV["HOMEBREW_CI_BUILD_NUMBER"]
+    ENV["CI_PULL_REQUEST"] = pr
+    ENV["CI_BUILD_URL"] = "https://github.com/#{ENV["HOMEBREW_GITHUB_REPOSITORY"]}/pull/#{pr}/checks"
+
+    ENV["CI_JOB_ID"] = ENV["TEST_ENV_NUMBER"] || "1"
   end
 
   SimpleCov.formatters = SimpleCov::Formatter::MultiFormatter.new(formatters)
@@ -98,6 +96,10 @@ RSpec.configure do |config|
     skip "Needs official command Taps." unless ENV["HOMEBREW_TEST_OFFICIAL_CMD_TAPS"]
   end
 
+  config.before(:each, :needs_linux) do
+    skip "Not on Linux." unless OS.linux?
+  end
+
   config.before(:each, :needs_macos) do
     skip "Not on macOS." unless OS.mac?
   end
@@ -125,8 +127,19 @@ RSpec.configure do |config|
   end
 
   config.before(:each, :needs_svn) do
-    homebrew_bin = File.dirname HOMEBREW_BREW_FILE
-    skip "subversion not installed." unless %W[/usr/bin/svn #{homebrew_bin}/svn].map { |x| File.executable?(x) }.any?
+    svn_paths = PATH.new(ENV["PATH"])
+    if OS.mac?
+      xcrun_svn = Utils.popen_read("xcrun", "-f", "svn")
+      svn_paths.append(File.dirname(xcrun_svn)) if $CHILD_STATUS.success? && xcrun_svn.present?
+    end
+
+    svn = which("svn", svn_paths)
+    svnadmin = which("svnadmin", svn_paths)
+    skip "subversion not installed." if !svn || !svnadmin
+
+    ENV["PATH"] = PATH.new(ENV["PATH"])
+                      .append(svn.dirname)
+                      .append(svnadmin.dirname)
   end
 
   config.before(:each, :needs_unzip) do
@@ -141,7 +154,14 @@ RSpec.configure do |config|
     end
 
     begin
+      Homebrew.raise_deprecation_exceptions = true
+
+      Formulary.clear_cache
       Tap.clear_cache
+      DependencyCollector.clear_cache
+      Formula.clear_cache
+      Keg.clear_cache
+      Tab.clear_cache
       FormulaInstaller.clear_attempted
 
       TEST_DIRECTORIES.each(&:mkpath)
@@ -172,6 +192,11 @@ RSpec.configure do |config|
         @__stderr.close
       end
 
+      Formulary.clear_cache
+      Tap.clear_cache
+      DependencyCollector.clear_cache
+      Formula.clear_cache
+      Keg.clear_cache
       Tab.clear_cache
 
       FileUtils.rm_rf [
@@ -181,6 +206,7 @@ RSpec.configure do |config|
         HOMEBREW_PINNED_KEGS,
         HOMEBREW_PREFIX/"var",
         HOMEBREW_PREFIX/"Caskroom",
+        HOMEBREW_PREFIX/"Frameworks",
         HOMEBREW_LIBRARY/"Taps/homebrew/homebrew-cask",
         HOMEBREW_LIBRARY/"Taps/homebrew/homebrew-bar",
         HOMEBREW_LIBRARY/"Taps/homebrew/homebrew-bundle",
@@ -214,11 +240,9 @@ RSpec::Matchers.alias_matcher :a_string_containing, :include
 
 RSpec::Matchers.define :a_json_string do
   match do |actual|
-    begin
-      JSON.parse(actual)
-      true
-    rescue JSON::ParserError
-      false
-    end
+    JSON.parse(actual)
+    true
+  rescue JSON::ParserError
+    false
   end
 end

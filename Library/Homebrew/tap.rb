@@ -241,6 +241,8 @@ class Tap
 
     if official? && DEPRECATED_OFFICIAL_TAPS.include?(repo)
       odie "#{name} was deprecated. This tap is now empty as all its formulae were migrated."
+    elsif user == "caskroom"
+      odie "#{name} was moved. Tap homebrew/cask-#{repo} instead."
     end
 
     if installed? && force_auto_update.nil?
@@ -727,7 +729,7 @@ class TapConfig
     return unless Utils.git_available?
 
     tap.path.cd do
-      Utils.popen_read("git", "config", "--local", "--get", "homebrew.#{key}").chomp.presence
+      Utils.popen_read("git", "config", "--get", "homebrew.#{key}").chomp.presence
     end
   end
 
@@ -736,7 +738,7 @@ class TapConfig
     return unless Utils.git_available?
 
     tap.path.cd do
-      safe_system "git", "config", "--local", "--replace-all", "homebrew.#{key}", value.to_s
+      safe_system "git", "config", "--replace-all", "homebrew.#{key}", value.to_s
     end
   end
 end

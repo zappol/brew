@@ -21,11 +21,11 @@ module ELFShim
   ARCHITECTURE_AARCH64 = 0xB7
 
   def read_uint8(offset)
-    read(1, offset).unpack("C").first
+    read(1, offset).unpack1("C")
   end
 
   def read_uint16(offset)
-    read(2, offset).unpack("v").first
+    read(2, offset).unpack1("v")
   end
 
   def elf?
@@ -68,10 +68,28 @@ module ELFShim
     elf_type == :executable
   end
 
+  def with_interpreter?
+    return @with_interpreter if defined? @with_interpreter
+
+    @with_interpreter = if binary_executable?
+      true
+    elsif dylib?
+      if which "readelf"
+        Utils.popen_read("readelf", "-l", to_path).include?(" INTERP ")
+      elsif which "file"
+        Utils.popen_read("file", "-L", "-b", to_path).include?(" interpreter ")
+      else
+        raise "Please install either readelf (from binutils) or file."
+      end
+    else
+      false
+    end
+  end
+
   def dynamic_elf?
     return @dynamic_elf if defined? @dynamic_elf
 
-    if which "readelf"
+    @dynamic_elf = if which "readelf"
       Utils.popen_read("readelf", "-l", to_path).include?(" DYNAMIC ")
     elsif which "file"
       !Utils.popen_read("file", "-L", "-b", to_path)[/dynamic|shared/].nil?

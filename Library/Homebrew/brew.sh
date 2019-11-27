@@ -4,6 +4,9 @@ then
   export LC_ALL="en_US.UTF-8"
 fi
 
+# USER isn't always set so provide a fall back for `brew` and subprocesses.
+export USER=${USER:-`id -un`}
+
 # Where we store built products; a Cellar in HOMEBREW_PREFIX (often /usr/local
 # for bottles) unless there's already a Cellar in HOMEBREW_REPOSITORY.
 if [[ -d "$HOMEBREW_REPOSITORY/Cellar" ]]
@@ -23,8 +26,17 @@ esac
 # Higher depths mean this command was invoked by another Homebrew command.
 export HOMEBREW_COMMAND_DEPTH=$((HOMEBREW_COMMAND_DEPTH + 1))
 
+ohai() {
+  if [[ -t 1 && -z "$HOMEBREW_NO_COLOR" ]] # check whether stdout is a tty.
+  then
+    echo -e "\\033[34m==>\\033[0m \\033[1m$*\\033[0m" # blue arrow and bold text
+  else
+    echo "==> $*"
+  fi
+}
+
 onoe() {
-  if [[ -t 2 ]] # check whether stderr is a tty.
+  if [[ -t 2 && -z "$HOMEBREW_NO_COLOR" ]] # check whether stderr is a tty.
   then
     echo -ne "\\033[4;31mError\\033[0m: " >&2 # highlight Error with underline and red color
   else
@@ -58,7 +70,7 @@ git() {
 numeric() {
   # Condense the exploded argument into a single return value.
   # shellcheck disable=SC2086,SC2183
-  printf "%01d%02d%02d%02d" ${1//[.rc]/ }
+  printf "%01d%02d%02d%03d" ${1//[.rc]/ } 2>/dev/null
 }
 
 HOMEBREW_VERSION="$(git -C "$HOMEBREW_REPOSITORY" describe --tags --dirty --abbrev=7 2>/dev/null)"
@@ -130,7 +142,7 @@ then
 
   # Set a variable when the macOS system Ruby is new enough to avoid spawning
   # a Ruby process unnecessarily.
-  if [[ "$HOMEBREW_MACOS_VERSION_NUMERIC" -lt "101303" ]]
+  if [[ "$HOMEBREW_MACOS_VERSION_NUMERIC" -lt "101500" ]]
   then
     unset HOMEBREW_MACOS_SYSTEM_RUBY_NEW_ENOUGH
   else
@@ -159,7 +171,10 @@ else
   # Git 2.7.4 is the version of git on Ubuntu 16.04 LTS (Xenial Xerus).
   HOMEBREW_MINIMUM_GIT_VERSION="2.7.0"
   system_git_version_output="$($(command -v git) --version 2>/dev/null)"
-  if [[ $(numeric "${system_git_version_output##* }") -lt $(numeric "$HOMEBREW_MINIMUM_GIT_VERSION") ]]
+  # $extra is intentionally discarded.
+  # shellcheck disable=SC2034
+  IFS=. read -r major minor micro build extra <<< "${system_git_version_output##* }"
+  if [[ $(numeric "$major.$minor.$micro.$build") -lt $(numeric "$HOMEBREW_MINIMUM_GIT_VERSION") ]]
   then
     HOMEBREW_FORCE_BREWED_GIT="1"
   fi
@@ -235,6 +250,7 @@ export HOMEBREW_MACOS_VERSION
 export HOMEBREW_MACOS_VERSION_NUMERIC
 export HOMEBREW_USER_AGENT
 export HOMEBREW_USER_AGENT_CURL
+export HOMEBREW_BOTTLE_DEFAULT_DOMAIN
 
 if [[ -n "$HOMEBREW_MACOS" && -x "/usr/bin/xcode-select" ]]
 then
@@ -374,8 +390,8 @@ fi
 check-run-command-as-root() {
   [[ "$(id -u)" = 0 ]] || return
 
-  # Allow Azure Pipelines/Docker to do everything as root (as it's normal there)
-  [[ -f /proc/1/cgroup ]] && grep -E "azpl_job|docker" -q /proc/1/cgroup && return
+  # Allow Azure Pipelines/Docker/Kubernetes to do everything as root (as it's normal there)
+  [[ -f /proc/1/cgroup ]] && grep -E "azpl_job|docker|kubepods" -q /proc/1/cgroup && return
 
   # Homebrew Services may need `sudo` for system-wide daemons.
   [[ "$HOMEBREW_COMMAND" = "services" ]] && return
@@ -458,6 +474,20 @@ update-preinstall() {
         "$HOMEBREW_CASK_COMMAND" = "install" || "$HOMEBREW_CASK_COMMAND" = "upgrade" ]]
   then
     export HOMEBREW_AUTO_UPDATING="1"
+
+    # Skip auto-update if the cask/core tap has been updated in the
+    # last $HOMEBREW_AUTO_UPDATE_SECS.
+    if [[ "$HOMEBREW_COMMAND" = "cask" ]]
+    then
+      tap_fetch_head="$HOMEBREW_LIBRARY/Taps/homebrew/homebrew-cask/.git/FETCH_HEAD"
+    else
+      tap_fetch_head="$HOMEBREW_LIBRARY/Taps/homebrew/homebrew-core/.git/FETCH_HEAD"
+    fi
+    if [[ -f "$tap_fetch_head" &&
+          -n "$(find "$tap_fetch_head" -type f -mtime -"${HOMEBREW_AUTO_UPDATE_SECS}"s 2>/dev/null)" ]]
+    then
+      return
+    fi
 
     if [[ -z "$HOMEBREW_VERBOSE" ]]
     then

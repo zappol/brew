@@ -39,52 +39,6 @@ module HomebrewArgvExtension
     downcased_unique_named.grep HOMEBREW_CASK_TAP_CASK_REGEX
   end
 
-  def kegs
-    require "keg"
-    require "formula"
-    # TODO: use @instance variable to ||= cache when moving to CLI::Parser
-    downcased_unique_named.map do |name|
-      raise UsageError if name.empty?
-
-      rack = Formulary.to_rack(name.downcase)
-
-      dirs = rack.directory? ? rack.subdirs : []
-
-      raise NoSuchKegError, rack.basename if dirs.empty?
-
-      linked_keg_ref = HOMEBREW_LINKED_KEGS/rack.basename
-      opt_prefix = HOMEBREW_PREFIX/"opt/#{rack.basename}"
-
-      begin
-        if opt_prefix.symlink? && opt_prefix.directory?
-          Keg.new(opt_prefix.resolved_path)
-        elsif linked_keg_ref.symlink? && linked_keg_ref.directory?
-          Keg.new(linked_keg_ref.resolved_path)
-        elsif dirs.length == 1
-          Keg.new(dirs.first)
-        else
-          f = if name.include?("/") || File.exist?(name)
-            Formulary.factory(name)
-          else
-            Formulary.from_rack(rack)
-          end
-
-          unless (prefix = f.installed_prefix).directory?
-            raise MultipleVersionsInstalledError, rack.basename
-          end
-
-          Keg.new(prefix)
-        end
-      rescue FormulaUnavailableError
-        raise <<~EOS
-          Multiple kegs installed to #{rack}
-          However we don't know which one you refer to.
-          Please delete (with rm -rf!) all but one and then try again.
-        EOS
-      end
-    end
-  end
-
   def value(name)
     arg_prefix = "--#{name}="
     flag_with_value = find { |arg| arg.start_with?(arg_prefix) }
@@ -121,6 +75,10 @@ module HomebrewArgvExtension
 
   def homebrew_developer?
     !ENV["HOMEBREW_DEVELOPER"].nil?
+  end
+
+  def skip_or_later_bottles?
+    homebrew_developer? && !ENV["HOMEBREW_SKIP_OR_LATER_BOTTLES"].nil?
   end
 
   def no_sandbox?
@@ -185,7 +143,7 @@ module HomebrewArgvExtension
   def collect_build_flags
     build_flags = []
 
-    build_flags << "--HEAD" if build_head?
+    build_flags << "--HEAD" if include?("--HEAD")
     build_flags << "--universal" if build_universal?
     build_flags << "--build-bottle" if build_bottle?
     build_flags << "--build-from-source" if build_from_source?

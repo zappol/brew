@@ -12,7 +12,7 @@ module Homebrew
       usage_banner <<~EOS
         `leaves`
 
-        Show installed formulae that are not dependencies of another installed formula.
+        List installed formulae that are not dependencies of another installed formula.
       EOS
       switch :debug
     end
@@ -25,11 +25,9 @@ module Homebrew
 
     deps_of_installed = installed.flat_map do |f|
       f.runtime_dependencies.map do |dep|
-        begin
-          dep.to_formula.full_name
-        rescue FormulaUnavailableError
-          dep.name
-        end
+        dep.to_formula.full_name
+      rescue FormulaUnavailableError
+        dep.name
       end
     end
 
